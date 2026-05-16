@@ -311,39 +311,35 @@ Unified tabbed dashboard rendering all agent outputs:
 
 ---
 
-## 🔗 Shared Claude API Helper (Both Use This)
+## 🔗 Shared Wafer Pass Helper (Both Use This)
 
-```js
-// shared/claude.js
-const callClaude = async (prompt, images = []) => {
-  const content = [
-    ...images.map(img => ({
-      type: "image",
-      source: { type: "base64", media_type: "image/jpeg", data: img }
-    })),
-    { type: "text", text: prompt }
-  ];
+Model: **Wafer Pass** — flat-rate access to the fastest open-source LLMs (YC-backed).
+Default model: `Qwen3.5-397B-A17B` (262K context). Fallback: `GLM-5.1`.
+API is OpenAI-compatible at `https://pass.wafer.ai/v1`.
 
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
+```ts
+// src/lib/callWafer.ts — client-side helper (calls Next.js API route)
+export async function callWafer(prompt, images = [], model) {
+  const res = await fetch("/api/generate", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": process.env.ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01"
-    },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-5",
-      max_tokens: 1000,
-      messages: [{ role: "user", content }]
-    })
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt, images, model }),
   });
+  if (!res.ok) throw new Error(`Wafer error ${res.status}`);
+  return res.json();
+}
+```
 
-  const data = await response.json();
-  const text = data.content.map(i => i.text || "").join("");
-  return JSON.parse(text.replace(/```json|```/g, "").trim());
-};
+```ts
+// src/app/api/generate/route.ts — server-side proxy (keeps API key safe)
+// POST body: { prompt: string, images?: string[], model?: string }
+// Calls https://pass.wafer.ai/v1/chat/completions
+// Strips markdown fences and parses JSON before returning
+```
 
-export default callClaude;
+**Environment variable needed:**
+```
+WAFER_API_KEY=   # from wafer.ai dashboard
 ```
 
 ---
