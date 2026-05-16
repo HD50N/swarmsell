@@ -6,13 +6,90 @@
 ## The Product
 An SMB owner (jeweler, clothing brand, candle maker) inputs their product info and photos. A swarm of agents automatically generates optimized listings, ads, and pricing across every major selling platform — all in under 60 seconds.
 
+**Key differentiator**: Before Claude writes a single word, Browserbase scrapes live competitor listings and real market prices from each platform. Claude then generates listings and pricing grounded in actual market data — not hallucinated guesses.
+
 ---
 
 ## The Split
 
 ```
-PERSON 1 — Input → Pricing → Platform Listings
+PERSON 1 — Input → Browserbase Research → Pricing → Platform Listings
 PERSON 2 — Marketing Agents → Dashboard → Output
+```
+
+---
+
+## 🌐 Browserbase — Market Research Layer (Person 1, runs first)
+
+Before any Claude agents fire, Browserbase runs parallel headless browser sessions to scrape live market data. This feeds into both the Pricing Agent and all Listing Agents.
+
+### What Browserbase Scrapes (per platform, in parallel)
+
+| Platform | What We Scrape |
+|---|---|
+| **Amazon** | Top 5 similar product prices, avg rating, top keywords from titles |
+| **Etsy** | Top 5 listing prices, top tags used, bestseller badge presence |
+| **eBay** | Sold listing prices (last 30 days), condition distribution |
+| **Walmart** | Shelf price range for category, top spec fields used |
+| **Facebook** | Local listing prices for same category in user's region |
+
+### Browserbase Research Agent
+
+```js
+// shared/browserbaseResearch.js
+import Browserbase from "@browserbasehq/sdk";
+
+const bb = new Browserbase({ apiKey: process.env.BROWSERBASE_API_KEY });
+
+const researchPlatform = async (platform, product) => {
+  const session = await bb.sessions.create({ projectId: process.env.BROWSERBASE_PROJECT_ID });
+  
+  const searchQueries = {
+    amazon:   `https://www.amazon.com/s?k=${encodeURIComponent(product.name)}`,
+    etsy:     `https://www.etsy.com/search?q=${encodeURIComponent(product.name)}`,
+    ebay:     `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(product.name)}&LH_Sold=1`,
+    walmart:  `https://www.walmart.com/search?q=${encodeURIComponent(product.name)}`,
+    facebook: `https://www.facebook.com/marketplace/search/?query=${encodeURIComponent(product.name)}`
+  };
+
+  // Use Stagehand (built on Browserbase) for AI-powered extraction
+  const { Stagehand } = await import("@browserbasehq/stagehand");
+  const stagehand = new Stagehand({ sessionId: session.id });
+  await stagehand.init();
+  await stagehand.page.goto(searchQueries[platform]);
+
+  const data = await stagehand.extract({
+    instruction: `Extract the top 5 listings: product title, price, and any tags or keywords visible.`,
+    schema: {
+      listings: [{ title: "string", price: "number", tags: ["string"] }]
+    }
+  });
+
+  await stagehand.close();
+  return { platform, ...data };
+};
+
+export const runMarketResearch = async (product, platforms) => {
+  // All platform scrapes fire simultaneously
+  const results = await Promise.all(
+    platforms.map(p => researchPlatform(p, product))
+  );
+  return Object.fromEntries(results.map(r => [r.platform, r]));
+};
+```
+
+### Research Output Schema (fed into Pricing + Listing agents)
+
+```json
+{
+  "marketData": {
+    "amazon":   { "priceRange": [34.99, 79.99], "avgPrice": 52.40, "topKeywords": ["sterling silver", "handmade ring", "gift for her"] },
+    "etsy":     { "priceRange": [38.00, 95.00], "avgPrice": 61.50, "topTags": ["handmade jewelry", "silver ring", "boho"] },
+    "ebay":     { "soldPriceRange": [28.00, 55.00], "avgSoldPrice": 41.00 },
+    "walmart":  { "priceRange": [19.99, 49.99], "avgPrice": 32.50 },
+    "facebook": { "priceRange": [25.00, 60.00], "avgPrice": 38.00 }
+  }
+}
 ```
 
 ---
@@ -29,10 +106,10 @@ PERSON 2 — Marketing Agents → Dashboard → Output
 - "Launch Swarm" button that fires all agents
 
 #### 2. Pricing Agent
-Uses Claude's knowledge of platform fee structures to recommend optimal prices per platform.
+Uses Claude + **live Browserbase market data** to recommend optimal prices per platform.
 
 ```js
-const pricingAgent = async (product) => {
+const pricingAgent = async (product, marketData) => {
   const prompt = `
     You are a pricing expert for SMB sellers.
     Product: ${product.name}
@@ -40,16 +117,24 @@ const pricingAgent = async (product) => {
     Supplier cost: $${product.cost}
     Target margin: ${product.targetMargin}%
 
-    Recommend optimal sell prices per platform after fees:
+    Live market data from Browserbase (scraped right now):
+    ${JSON.stringify(marketData, null, 2)}
+
+    Platform fee structures:
     - Amazon (15% referral fee)
     - Etsy (6.5% transaction fee)
     - eBay (13% final value fee)
     - Walmart (15% referral fee)
     - Facebook Marketplace (0% fee)
 
+    Using the real competitor prices above, recommend optimal sell prices per platform.
+    Position competitively — not just covering fees.
+
     For each platform return:
     - recommended_price
     - margin_pct after fees
+    - competitor_avg (from market data)
+    - positioning ("undercut" | "match" | "premium")
     - one-line pricing rationale
 
     Return JSON only.
@@ -69,9 +154,9 @@ const pricingAgent = async (product) => {
 | **Facebook** | Local tone, simple description, price anchoring, pickup/shipping note |
 
 ```js
-const runListingAgents = async (product, pricing) => {
+const runListingAgents = async (product, pricing, marketData) => {
   const agents = product.platforms.map(platform =>
-    listingAgent(platform, product, pricing)
+    listingAgent(platform, product, pricing, marketData)
   );
   return await Promise.all(agents); // all fire simultaneously
 };
@@ -80,7 +165,7 @@ const runListingAgents = async (product, pricing) => {
 #### 4. Individual Listing Agent Template
 
 ```js
-const listingAgent = async (platform, product, pricing) => {
+const listingAgent = async (platform, product, pricing, marketData) => {
   const rules = {
     amazon: `Write a 200 char keyword-rich title, 5 bullet points starting with capitals,
              and 10 backend search keywords. Optimize for Amazon A9 algorithm.`,
@@ -98,6 +183,12 @@ const listingAgent = async (platform, product, pricing) => {
     Description: ${product.description}
     Price on ${platform}: $${pricing[platform].price}
     Images provided.
+
+    Live competitor data from Browserbase:
+    - Competitor avg price: $${marketData[platform]?.avgPrice}
+    - Top keywords/tags competitors use: ${JSON.stringify(marketData[platform]?.topKeywords || marketData[platform]?.topTags)}
+
+    Use this real market data to write a listing that outcompetes these results.
 
     ${rules[platform]}
 
@@ -119,12 +210,19 @@ Hand this to Person 2 when complete:
     "category": "jewelry",
     "images": ["base64..."]
   },
+  "marketData": {
+    "amazon":   { "avgPrice": 52.40, "topKeywords": ["sterling silver", "handmade ring"] },
+    "etsy":     { "avgPrice": 61.50, "topTags": ["handmade jewelry", "silver ring"] },
+    "ebay":     { "avgSoldPrice": 41.00 },
+    "walmart":  { "avgPrice": 32.50 },
+    "facebook": { "avgPrice": 38.00 }
+  },
   "pricing": {
-    "amazon":   { "price": 49.99, "margin": 34, "rationale": "Competitive for handmade jewelry" },
-    "etsy":     { "price": 54.99, "margin": 41, "rationale": "Story-driven buyers pay premium" },
-    "ebay":     { "price": 44.99, "margin": 28, "rationale": "Price-sensitive auction buyers" },
-    "walmart":  { "price": 47.99, "margin": 31, "rationale": "Mid-market positioning" },
-    "facebook": { "price": 42.00, "margin": 47, "rationale": "No fees, local buyers" }
+    "amazon":   { "price": 49.99, "margin": 34, "competitorAvg": 52.40, "positioning": "undercut", "rationale": "Slightly below avg to capture Buy Box" },
+    "etsy":     { "price": 54.99, "margin": 41, "competitorAvg": 61.50, "positioning": "undercut", "rationale": "Story-driven buyers pay premium but we undercut bestsellers" },
+    "ebay":     { "price": 44.99, "margin": 28, "competitorAvg": 41.00, "positioning": "match", "rationale": "Match sold price avg for auction conversion" },
+    "walmart":  { "price": 47.99, "margin": 31, "competitorAvg": 32.50, "positioning": "premium", "rationale": "Handmade commands premium over mass-market" },
+    "facebook": { "price": 42.00, "margin": 47, "competitorAvg": 38.00, "positioning": "match", "rationale": "No fees, local buyers, match local market" }
   },
   "listings": {
     "amazon":   { "title": "...", "bullets": [...], "keywords": [...] },
@@ -144,7 +242,7 @@ Hand this to Person 2 when complete:
 
 #### 1. Meta Ad Agent (Facebook/Instagram)
 ```js
-const metaAdAgent = async (product, listings) => {
+const metaAdAgent = async (product, listings, marketData) => {
   const prompt = `
     You are a Meta ads expert for small businesses.
     Product: ${product.name}
@@ -192,18 +290,19 @@ const metaAdAgent = async (product, listings) => {
 Unified tabbed dashboard rendering all agent outputs:
 
 ```
-┌──────────────────────────────────────────────────────┐
-│  ✅ Swarm Complete — 9 agents, 47 seconds            │
-├───────────┬───────┬───────┬─────────┬────────────────┤
-│  Amazon   │ Etsy  │  eBay │ Walmart │ Facebook       │
-├───────────┴───────┴───────┴─────────┴────────────────┤
-│  [Generated listing copy — copy-paste ready]         │
-│  [Recommended price + margin breakdown]              │
-├──────────────────────────────────────────────────────┤
-│  📣 Meta Ads    🎵 TikTok    📧 Email    📱 Social    │
-├──────────────────────────────────────────────────────┤
-│  [Marketing outputs per tab]                         │
-└──────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│  ✅ Swarm Complete — 10 agents, 47 seconds                   │
+│  🌐 Live market data pulled from 5 platforms via Browserbase │
+├───────────┬───────┬───────┬─────────┬────────────────────────┤
+│  Amazon   │ Etsy  │  eBay │ Walmart │ Facebook               │
+├───────────┴───────┴───────┴─────────┴────────────────────────┤
+│  [Generated listing copy — copy-paste ready]                 │
+│  [Recommended price vs competitor avg + positioning]         │
+├──────────────────────────────────────────────────────────────┤
+│  📣 Meta Ads    🎵 TikTok    📧 Email    📱 Social            │
+├──────────────────────────────────────────────────────────────┤
+│  [Marketing outputs per tab]                                 │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 #### 6. Export
@@ -227,9 +326,13 @@ const callClaude = async (prompt, images = []) => {
 
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": process.env.ANTHROPIC_API_KEY,
+      "anthropic-version": "2023-06-01"
+    },
     body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-5",
       max_tokens: 1000,
       messages: [{ role: "user", content }]
     })
@@ -250,18 +353,47 @@ export default callClaude;
 ```
 /
 ├── shared/
-│   └── claude.js          ← shared API helper (set up together hour 1)
+│   ├── claude.js                ← shared Claude API helper
+│   └── browserbaseResearch.js   ← Browserbase market scraper (NEW)
 ├── person1/
-│   ├── InputUI.jsx        ← product form + image upload
-│   ├── pricingAgent.js    ← pricing per platform
-│   └── listingAgents.js   ← 5 platform listing agents
+│   ├── InputUI.jsx              ← product form + image upload
+│   ├── pricingAgent.js          ← pricing per platform (uses market data)
+│   └── listingAgents.js         ← 5 platform listing agents (uses market data)
 ├── person2/
-│   ├── metaAdAgent.js     ← Facebook/Instagram ads
-│   ├── tiktokAgent.js     ← TikTok hooks + captions
-│   ├── emailAgent.js      ← 3-email launch sequence
-│   ├── socialAgent.js     ← 7-day caption bank
-│   └── Dashboard.jsx      ← unified output UI
-└── App.jsx                ← orchestration + Promise.all
+│   ├── metaAdAgent.js           ← Facebook/Instagram ads
+│   ├── tiktokAgent.js           ← TikTok hooks + captions
+│   ├── emailAgent.js            ← 3-email launch sequence
+│   ├── socialAgent.js           ← 7-day caption bank
+│   └── Dashboard.jsx            ← unified output UI
+└── App.jsx                      ← orchestration + Promise.all
+```
+
+---
+
+## 🕐 Agent Execution Order
+
+```
+[User hits "Launch Swarm"]
+         │
+         ▼
+┌─────────────────────────────────────┐
+│  Browserbase Research (parallel)    │  ← scrapes all 5 platforms at once
+│  amazon │ etsy │ ebay │ wmt │ fb   │
+└─────────────────────────────────────┘
+         │  marketData
+         ▼
+┌──────────────────────┐
+│   Pricing Agent      │  ← Claude + real prices → platform pricing
+└──────────────────────┘
+         │  pricing + marketData
+         ▼
+┌─────────────────────────────────────────────────────┐
+│  Listing Agents (parallel)  │  Marketing (parallel) │
+│  amazon │ etsy │ ebay │...  │  meta │ tiktok │ ...  │
+└─────────────────────────────────────────────────────┘
+         │
+         ▼
+    Dashboard renders
 ```
 
 ---
@@ -270,10 +402,11 @@ export default callClaude;
 
 | Hours | Person 1 | Person 2 |
 |---|---|---|
-| **0–1** | 🤝 Together: set up repo, agree on output schema, wire shared claude.js helper |  |
-| **1–4** | Input UI + image upload working | Dashboard shell + tab structure |
-| **4–8** | Pricing Agent + Amazon + Etsy agents | Meta Ad Agent + TikTok Agent |
-| **8–12** | eBay + Walmart + Facebook agents | Email Agent + Social Agent |
+| **0–1** | 🤝 Together: set up repo, agree on output schema, wire shared claude.js + browserbaseResearch.js |  |
+| **1–3** | Browserbase research agent working (all 5 platforms) | Dashboard shell + tab structure |
+| **3–5** | Input UI + image upload working | Meta Ad Agent + TikTok Agent |
+| **5–8** | Pricing Agent (Claude + market data) + Amazon + Etsy agents | Email Agent + Social Agent |
+| **8–12** | eBay + Walmart + Facebook agents | Dashboard wired to real data |
 | **12–14** | ⚠️ Integration checkpoint — plug everything together end-to-end | |
 | **14–17** | Polish listing outputs, edge cases | Polish dashboard UI |
 | **17–20** | Full end-to-end demo run | Export (copy + download) |
@@ -285,32 +418,48 @@ export default callClaude;
 
 ## ⚠️ Integration Checkpoint (Hour 12)
 Verify before moving on:
-- [ ] Input UI fires all agents on button click
+- [ ] Browserbase research agent returns market data for all platforms
+- [ ] Input UI fires all agents on button click (research → pricing → listings)
 - [ ] All listing agents run in parallel via Promise.all
+- [ ] Pricing agent shows competitor avg alongside recommended price
 - [ ] Person 2's agents consume Person 1's output schema correctly
 - [ ] Dashboard renders at least one real agent output
 
-**If behind:** Cut Walmart + Facebook listings. Focus on Amazon + Etsy only. Cut TikTok agent. Core demo is still strong.
+**If behind:** Skip Browserbase and fall back to Claude-only pricing. Cut Walmart + Facebook listings. Focus on Amazon + Etsy only. Cut TikTok agent. Core demo is still strong.
 
 ---
 
 ## 🎯 Demo Script (60 seconds)
 
 1. **Input** — type "Handmade Silver Ring, $8 cost" + upload photo, select all platforms
-2. **Hit Launch** — show 9 agents firing in parallel with live status indicators
-3. **Listings tab** — show Amazon listing, flip to Etsy (completely different tone and structure)
-4. **Pricing tab** — "Etsy recommended at $54.99 — 41% margin after fees. Facebook at $42 — 47% margin, no fees"
+2. **Hit Launch** — show Browserbase scraping 5 platforms live, then 9 Claude agents firing in parallel
+3. **Pricing tab** — "Amazon competitors average $52 — we're recommending $49.99 to undercut and win the Buy Box. Etsy competitors average $61 — we're pricing at $54.99, undercutting bestsellers"
+4. **Listings tab** — show Amazon listing, flip to Etsy (completely different tone and structure)
 5. **Ads tab** — show 3 Meta ad variants ready to paste into Ads Manager
 6. **Email tab** — show 3-email launch sequence ready to go
-7. **Pitch line** — *"This took 47 seconds. Doing this manually takes a full day — and most SMB owners never do it at all."*
+7. **Pitch line** — *"This took 47 seconds. And unlike other tools, we didn't guess the prices — we checked what your competitors are actually charging, right now."*
 
 ---
 
 ## 🏆 Why This Wins
 
-- **Swarm is visible** — judges see agents firing in parallel, not a black box
+- **Swarm is visible** — judges see Browserbase + agents firing in parallel, not a black box
+- **Real data, not hallucinations** — Browserbase grounds pricing in live market reality
 - **SMB story is relatable** — every judge knows a small business owner
-- **No deployment risk** — pure generation, nothing to break on stage
+- **No deployment risk** — pure generation + scraping, nothing to break on stage
 - **Scope is tight** — every feature serves the core demo
 - **Clear business model** — $29/month per SMB, or pay-per-launch-kit
 - **Snowflake ready** — easy to add post-hackathon for the "gets smarter over time" story
+
+## 📦 New Dependencies
+
+```bash
+npm install @browserbasehq/sdk @browserbasehq/stagehand
+```
+
+**Environment variables needed:**
+```
+BROWSERBASE_API_KEY=
+BROWSERBASE_PROJECT_ID=
+ANTHROPIC_API_KEY=
+```
