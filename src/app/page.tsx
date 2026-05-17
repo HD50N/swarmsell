@@ -9,7 +9,6 @@ const PLATFORMS = [
   { id: "etsy",     label: "Etsy",     color: "#F1641E" },
   { id: "ebay",     label: "eBay",     color: "#E53238" },
   { id: "walmart",  label: "Walmart",  color: "#0071CE" },
-  { id: "facebook", label: "Facebook", color: "#1877F2" },
 ];
 
 const CATEGORIES = [
@@ -26,12 +25,23 @@ const CATEGORIES = [
 ];
 
 const STATS = [
-  { value: "5", label: "platforms" },
+  { value: "4", label: "platforms" },
   { value: "10", label: "agents" },
   { value: "live", label: "market data" },
 ];
 
 type AgentStatus = "idle" | "launching";
+
+const DEMO_PRODUCT = {
+  name: "Hand-Poured Soy Candle — Lavender & Cedar (8 oz)",
+  category: "Candles & Beauty",
+  description:
+    "Small-batch soy candle in a reusable amber jar. 45+ hour burn, cotton wick, phthalate-free fragrance. Made in the USA. Good for home office, gifts, and self-care.",
+  cost: "4.25",
+  margin: "40",
+  platforms: ["amazon", "etsy", "ebay", "walmart"],
+  images: [] as string[],
+};
 
 export default function HomePage() {
   const router = useRouter();
@@ -43,7 +53,7 @@ export default function HomePage() {
   const [cost, setCost] = useState("");
   const [margin, setMargin] = useState("40");
   const [platforms, setPlatforms] = useState<Set<string>>(
-    new Set(["amazon", "etsy", "ebay", "walmart", "facebook"])
+    new Set(["amazon", "etsy", "ebay", "walmart"])
   );
   const [images, setImages] = useState<{ preview: string; b64: string }[]>([]);
   const [isDragging, setIsDragging] = useState(false);
@@ -83,10 +93,23 @@ export default function HomePage() {
 
   const canLaunch = name.trim() && category && platforms.size > 0;
 
+  const saveAndGoToDashboard = (payload: {
+    name: string;
+    category: string;
+    description: string;
+    cost: string;
+    margin: string;
+    platforms: string[];
+    images: string[];
+  }) => {
+    localStorage.setItem("swarmsell-product", JSON.stringify(payload));
+    router.push("/dashboard");
+  };
+
   const handleLaunch = () => {
     if (!canLaunch || status === "launching") return;
     setStatus("launching");
-    const payload = {
+    saveAndGoToDashboard({
       name,
       category,
       description,
@@ -94,9 +117,19 @@ export default function HomePage() {
       margin,
       platforms: Array.from(platforms),
       images: images.map((i) => i.b64),
-    };
-    localStorage.setItem("swarmsell-product", JSON.stringify(payload));
-    setTimeout(() => router.push("/dashboard"), 600);
+    });
+  };
+
+  const handleViewDemoDashboard = () => {
+    if (status === "launching") return;
+    setName(DEMO_PRODUCT.name);
+    setCategory(DEMO_PRODUCT.category);
+    setDescription(DEMO_PRODUCT.description);
+    setCost(DEMO_PRODUCT.cost);
+    setMargin(DEMO_PRODUCT.margin);
+    setPlatforms(new Set(DEMO_PRODUCT.platforms));
+    setImages([]);
+    saveAndGoToDashboard(DEMO_PRODUCT);
   };
 
   const inputBase: React.CSSProperties = {
@@ -166,23 +199,26 @@ export default function HomePage() {
                 BROWSERBASE READY
               </span>
             </div>
-            <Link
-              href="/dashboard"
+            <button
+              type="button"
+              onClick={handleViewDemoDashboard}
+              disabled={status === "launching"}
               style={{
                 fontSize: 12,
                 fontFamily: "var(--font-mono)",
                 letterSpacing: "0.08em",
                 color: "var(--amber)",
-                textDecoration: "none",
                 border: "1px solid rgba(240,160,40,0.35)",
                 borderRadius: 6,
                 padding: "6px 14px",
                 background: "rgba(240,160,40,0.07)",
+                cursor: status === "launching" ? "not-allowed" : "pointer",
+                opacity: status === "launching" ? 0.6 : 1,
                 transition: "background 0.2s",
               }}
             >
-              VIEW DASHBOARD →
-            </Link>
+              VIEW DEMO DASHBOARD →
+            </button>
           </div>
         </div>
       </header>

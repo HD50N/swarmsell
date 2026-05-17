@@ -1,5 +1,5 @@
 export * from "./types";
-export { runSwarm, type SwarmPhase, type SwarmProgressEvent } from "./runSwarm";
+export { runSwarm, type RunSwarmOptions, type SwarmPhase, type SwarmProgressEvent } from "./runSwarm";
 export {
   runMarketResearch,
   type ResearchResult,

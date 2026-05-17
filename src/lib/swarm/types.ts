@@ -1,13 +1,12 @@
 // Shared types for the swarm pipeline: research → pricing → listings → marketing.
 
-export type Platform = "amazon" | "etsy" | "ebay" | "walmart" | "facebook";
+export type Platform = "amazon" | "etsy" | "ebay" | "walmart";
 
 export const ALL_PLATFORMS: readonly Platform[] = [
   "amazon",
   "etsy",
   "ebay",
   "walmart",
-  "facebook",
 ] as const;
 
 export type ProductInput = {
@@ -64,17 +63,11 @@ export type WalmartListing = {
   description: string;
   specs?: Record<string, string>;
 };
-export type FacebookListing = {
-  title: string;
-  description: string;
-};
-
 export type Listings = {
   amazon?: AmazonListing;
   etsy?: EtsyListing;
   ebay?: EbayListing;
   walmart?: WalmartListing;
-  facebook?: FacebookListing;
 };
 
 export type LaunchKit = {

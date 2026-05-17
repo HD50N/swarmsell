@@ -19,15 +19,21 @@ export type SwarmProgressEvent = {
 /**
  * Sell-side pipeline: Browserbase research → pricing → listing agents (parallel).
  */
+export type RunSwarmOptions = {
+  signal?: AbortSignal;
+};
+
 export async function runSwarm(
   product: ProductInput,
   platforms: Platform[],
-  onProgress?: (event: SwarmProgressEvent) => void | Promise<void>
+  onProgress?: (event: SwarmProgressEvent) => void | Promise<void>,
+  options?: RunSwarmOptions
 ): Promise<LaunchKit> {
   await onProgress?.({ phase: "research" });
   const { marketData } = await runMarketResearch(product.name, platforms, {
     onBrowserSession: (browserSession) => onProgress?.({ phase: "research", browserSession }),
     onBrowserClosed: (platform) => onProgress?.({ phase: "research", browserClosed: platform }),
+    signal: options?.signal,
   });
 
   await onProgress?.({

@@ -14,7 +14,14 @@ export type BrowserSessionEvent = {
 type SseHandlers = {
   onBrowserSession?: (event: BrowserSessionEvent) => void;
   onBrowserClosed?: (platform: Platform) => void;
+  signal?: AbortSignal;
 };
+
+function isAbortError(err: unknown): boolean {
+  if (err instanceof DOMException && err.name === "AbortError") return true;
+  if (err instanceof Error && err.name === "AbortError") return true;
+  return false;
+}
 
 function parseSseBuffer(buffer: string): {
   events: Array<{ event: string; data: string }>;
@@ -38,10 +45,35 @@ function parseSseBuffer(buffer: string): {
   return { events, rest };
 }
 
-/**
- * Browserbase market research with live session URLs streamed as each browser starts.
- */
-export async function runMarketResearch(
+function dispatchSseEvent(
+  event: string,
+  data: string,
+  handlers: SseHandlers | undefined,
+  accum: { marketData: MarketData; errors: Partial<Record<Platform, string>> }
+) {
+  const parsed = JSON.parse(data) as Record<string, unknown>;
+  if (event === "browser") {
+    handlers?.onBrowserSession?.({
+      platform: parsed.platform as Platform,
+      debugUrl: parsed.debugUrl as string,
+      sessionUrl: parsed.sessionUrl as string | undefined,
+    });
+  } else if (event === "browser_closed") {
+    handlers?.onBrowserClosed?.(parsed.platform as Platform);
+  } else if (event === "platform") {
+    const platform = parsed.platform as Platform;
+    if (parsed.error) {
+      accum.errors = { ...accum.errors, [platform]: String(parsed.error) };
+    } else if (parsed.data) {
+      accum.marketData = { ...accum.marketData, [platform]: parsed.data as MarketData[Platform] };
+    }
+  } else if (event === "done") {
+    accum.marketData = (parsed.marketData as MarketData) ?? accum.marketData;
+    accum.errors = (parsed.errors as Partial<Record<Platform, string>>) ?? accum.errors;
+  }
+}
+
+async function runMarketResearchStream(
   productName: string,
   platforms: Platform[],
   handlers?: SseHandlers
@@ -53,23 +85,26 @@ export async function runMarketResearch(
       Accept: "text/event-stream",
     },
     body: JSON.stringify({ query: productName, platforms }),
+    signal: handlers?.signal,
   });
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    console.error("[browserbaseResearch] /api/research failed:", err);
-    return { marketData: {}, errors: {} };
+    throw new Error(
+      typeof err === "object" && err && "error" in err
+        ? String((err as { error: string }).error)
+        : `Research failed (${res.status})`
+    );
   }
 
   if (!res.body) {
-    return { marketData: {}, errors: {} };
+    throw new Error("Research stream has no body");
   }
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  let marketData: MarketData = {};
-  let errors: Partial<Record<Platform, string>> = {};
+  const accum: ResearchResult = { marketData: {}, errors: {} };
 
   while (true) {
     const { done, value } = await reader.read();
@@ -81,31 +116,50 @@ export async function runMarketResearch(
 
     for (const { event, data } of events) {
       try {
-        const parsed = JSON.parse(data) as Record<string, unknown>;
-        if (event === "browser") {
-          handlers?.onBrowserSession?.({
-            platform: parsed.platform as Platform,
-            debugUrl: parsed.debugUrl as string,
-            sessionUrl: parsed.sessionUrl as string | undefined,
-          });
-        } else if (event === "browser_closed") {
-          handlers?.onBrowserClosed?.(parsed.platform as Platform);
-        } else if (event === "platform") {
-          const platform = parsed.platform as Platform;
-          if (parsed.error) {
-            errors = { ...errors, [platform]: String(parsed.error) };
-          } else if (parsed.data) {
-            marketData = { ...marketData, [platform]: parsed.data as MarketData[Platform] };
-          }
-        } else if (event === "done") {
-          marketData = (parsed.marketData as MarketData) ?? marketData;
-          errors = (parsed.errors as Partial<Record<Platform, string>>) ?? errors;
-        }
+        dispatchSseEvent(event, data, handlers, accum);
       } catch (e) {
         console.warn("[browserbaseResearch] SSE parse error:", e);
       }
     }
   }
 
-  return { marketData, errors };
+  return accum;
+}
+
+async function runMarketResearchJson(
+  productName: string,
+  platforms: Platform[],
+  signal?: AbortSignal
+): Promise<ResearchResult> {
+  const res = await fetch("/api/research", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query: productName, platforms }),
+    signal,
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    console.error("[browserbaseResearch] /api/research failed:", err);
+    return { marketData: {}, errors: {} };
+  }
+
+  return res.json() as Promise<ResearchResult>;
+}
+
+/**
+ * Browserbase market research. Prefers SSE for live browser URLs; falls back to JSON.
+ */
+export async function runMarketResearch(
+  productName: string,
+  platforms: Platform[],
+  handlers?: SseHandlers
+): Promise<ResearchResult> {
+  try {
+    return await runMarketResearchStream(productName, platforms, handlers);
+  } catch (err) {
+    if (isAbortError(err)) throw err;
+    console.warn("[browserbaseResearch] SSE failed, falling back to JSON:", err);
+    return runMarketResearchJson(productName, platforms, handlers?.signal);
+  }
 }

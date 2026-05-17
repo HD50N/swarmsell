@@ -6,7 +6,6 @@ const FEES: Record<Platform, { pct: number; label: string }> = {
   etsy:     { pct: 0.065, label: "6.5% transaction fee + $0.20 listing" },
   ebay:     { pct: 0.13,  label: "13% final value fee" },
   walmart:  { pct: 0.15,  label: "15% referral fee" },
-  facebook: { pct: 0,     label: "0% — no platform fee" },
 };
 
 export async function pricingAgent(

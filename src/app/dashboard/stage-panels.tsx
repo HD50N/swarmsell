@@ -5,7 +5,6 @@ const PLATFORMS = [
   { id: "etsy", label: "Etsy", color: "#F1641E" },
   { id: "ebay", label: "eBay", color: "#E53238" },
   { id: "walmart", label: "Walmart", color: "#0071CE" },
-  { id: "facebook", label: "Facebook", color: "#1877F2" },
 ] as const;
 
 export type PausedStage = "research" | "pricing" | "listings" | "marketing";
@@ -244,7 +243,7 @@ export function MarketDataResults({ marketData }: { marketData: MarketData }) {
     );
   }
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
       {entries.map((pl) => {
         const md = marketData[pl.id as Platform]!;
         const avg = md.avgPrice ?? md.avgSoldPrice;

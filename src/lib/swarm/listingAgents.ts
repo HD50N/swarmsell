@@ -38,11 +38,6 @@ Return JSON: { "title": string, "condition": string, "specs": { [key: string]: s
 
 Return JSON: { "title": string, "description": string, "specs"?: { [key: string]: string } }`,
 
-  facebook: `Write a casual Facebook Marketplace listing for local + shipping buyers.
-- title: short and direct, mention price or deal hook, max 60 chars
-- description: 2–3 casual sentences. Local-market tone. Mention local pickup and/or shipping option.
-
-Return JSON: { "title": string, "description": string }`,
 };
 
 async function listingAgent(

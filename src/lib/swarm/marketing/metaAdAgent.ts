@@ -6,8 +6,8 @@ export async function metaAdAgent(kit: LaunchKit): Promise<MetaAdsOutput> {
 
   const storyHint =
     listings.etsy?.description ?? product.description ?? product.name;
-  const fbAvg = marketData.facebook?.avgPrice;
-  const fbPrice = pricing.facebook?.price ?? pricing.amazon?.price;
+  const compAvg = marketData.etsy?.avgPrice ?? marketData.amazon?.avgPrice;
+  const adPrice = pricing.etsy?.price ?? pricing.amazon?.price;
 
   const prompt = `
 You are a Meta Ads (Facebook/Instagram) expert for small-business sellers.
@@ -15,8 +15,8 @@ You are a Meta Ads (Facebook/Instagram) expert for small-business sellers.
 Product: ${product.name}
 Category: ${product.category}
 Story hint (use for tone, not as a quote): ${storyHint}
-Our Facebook price: ${fbPrice != null ? `$${fbPrice}` : "n/a"}
-Competitor avg on Facebook Marketplace: ${fbAvg != null ? `$${fbAvg}` : "n/a"}
+Our price: ${adPrice != null ? `$${adPrice}` : "n/a"}
+Competitor avg (Etsy/Amazon research): ${compAvg != null ? `$${compAvg}` : "n/a"}
 
 Generate exactly 3 ad variants for Meta Ads Manager:
 1. type "awareness" — pattern-interrupt hook, NO hard CTA, build curiosity

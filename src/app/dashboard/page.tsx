@@ -11,14 +11,13 @@ import {
   type ProductInput,
 } from "@/lib/swarm";
 import {
-  BrowserLiveGrid,
   ContinueBanner,
   MarketDataResults,
   PricingResults,
-  SectionShell,
   type LiveBrowserSession,
   type PausedStage,
 } from "./stage-panels";
+import { OrchestratorHub } from "./orchestrator";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -42,13 +41,11 @@ const INITIAL_AGENTS: Agent[] = [
   { id: "bb-etsy",      name: "Etsy Research",        phase: 1, type: "BROWSERBASE", activeLabel: "Scraping competitor prices...",      result: "Analyzing live listings",                status: "queued" },
   { id: "bb-ebay",      name: "eBay Research",        phase: 1, type: "BROWSERBASE", activeLabel: "Scraping sold listings...",          result: "Analyzing sold prices",                  status: "queued" },
   { id: "bb-walmart",   name: "Walmart Research",     phase: 1, type: "BROWSERBASE", activeLabel: "Scraping shelf prices...",           result: "Analyzing shelf prices",                 status: "queued" },
-  { id: "bb-facebook",  name: "Facebook Research",    phase: 1, type: "BROWSERBASE", activeLabel: "Scraping local listings...",         result: "Analyzing local market",                 status: "queued" },
   { id: "pricing",      name: "Pricing Intelligence", phase: 2, type: "CLAUDE",      activeLabel: "Analyzing market data + fees...",    result: "Optimal prices computed",                status: "queued" },
   { id: "lst-amazon",   name: "Amazon Listing",       phase: 3, type: "CLAUDE",      activeLabel: "Writing A9-optimized listing...",    result: "Title + 5 bullets + 10 keywords",        status: "queued" },
   { id: "lst-etsy",     name: "Etsy Listing",         phase: 3, type: "CLAUDE",      activeLabel: "Writing story-driven copy...",       result: "Title + description + 13 tags",          status: "queued" },
   { id: "lst-ebay",     name: "eBay Listing",         phase: 3, type: "CLAUDE",      activeLabel: "Writing spec-heavy listing...",      result: "Title + specs + format rec",             status: "queued" },
   { id: "lst-walmart",  name: "Walmart Listing",      phase: 3, type: "CLAUDE",      activeLabel: "Writing taxonomy-compliant copy...", result: "Title + spec description",               status: "queued" },
-  { id: "lst-facebook", name: "Facebook Listing",     phase: 3, type: "CLAUDE",      activeLabel: "Writing local-market copy...",       result: "Casual description + pricing",           status: "queued" },
   { id: "meta-ads",     name: "Meta Ad Agent",        phase: 4, type: "CLAUDE",      activeLabel: "Writing 3 ad variants...",           result: "Awareness + Consideration + Conversion", status: "queued" },
   { id: "tiktok",       name: "TikTok Agent",         phase: 4, type: "CLAUDE",      activeLabel: "Writing viral hooks...",             result: "3 scripts + captions + hashtags",        status: "queued" },
   { id: "email",        name: "Email Agent",          phase: 4, type: "CLAUDE",      activeLabel: "Writing launch sequence...",         result: "3-email launch sequence",                status: "queued" },
@@ -60,7 +57,6 @@ const PLATFORMS = [
   { id: "etsy",     label: "Etsy",     color: "#F1641E" },
   { id: "ebay",     label: "eBay",     color: "#E53238" },
   { id: "walmart",  label: "Walmart",  color: "#0071CE" },
-  { id: "facebook", label: "Facebook", color: "#1877F2" },
 ];
 
 const MKT_TABS = [
@@ -70,75 +66,101 @@ const MKT_TABS = [
   { id: "social", label: "Social"   },
 ];
 
-// ── Sub-components ────────────────────────────────────────────────────────────
+type WorkspaceTab = "network" | PausedStage;
 
-function AgentCard({ agent }: { agent: Agent }) {
-  const isActive = agent.status === "active";
-  const isDone   = agent.status === "complete";
-  const isQueued = agent.status === "queued";
-  return (
-    <div
-      style={{
-        position: "relative",
-        overflow: "hidden",
-        border: `1px solid ${isActive ? "rgba(240,160,40,0.45)" : isDone ? "rgba(0,232,122,0.35)" : "var(--edge)"}`,
-        borderRadius: 8,
-        padding: "13px 14px",
-        background: isActive ? "rgba(240,160,40,0.06)" : isDone ? "rgba(0,232,122,0.05)" : "var(--surface)",
-        transition: "border-color 0.4s, background 0.4s",
-      }}
-    >
-      {isActive && (
-        <div
-          style={{
-            position: "absolute", top: 0, bottom: 0, width: "45%",
-            background: "linear-gradient(90deg, transparent, rgba(240,160,40,0.14), transparent)",
-            animation: "scanBar 2s linear infinite",
-            pointerEvents: "none",
-          }}
-        />
-      )}
-      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 7 }}>
-        <div
-          style={{
-            width: 7, height: 7, borderRadius: "50%", flexShrink: 0,
-            background: isActive ? "var(--amber)" : isDone ? "var(--signal)" : "var(--dim)",
-            ...(isActive ? { animation: "pulseLive 1s ease infinite" } : {}),
-          }}
-        />
-        <span style={{ fontSize: 9, fontFamily: "var(--font-mono)", letterSpacing: "0.12em", color: isActive ? "var(--amber)" : isDone ? "var(--signal)" : "var(--dim)" }}>
-          {agent.type}
-        </span>
-        {isDone && agent.elapsed && (
-          <span style={{ fontSize: 9, fontFamily: "var(--font-mono)", color: "var(--dim)", marginLeft: "auto" }}>
-            {agent.elapsed}ms
-          </span>
-        )}
-      </div>
-      <div style={{ fontSize: 13, fontWeight: 600, color: isQueued ? "var(--sub)" : "var(--text)", marginBottom: 5 }}>
-        {agent.name}
-      </div>
-      {isActive && (
-        <div style={{ fontSize: 10, color: "rgba(240,160,40,0.7)", fontFamily: "var(--font-mono)", letterSpacing: "0.05em" }}>
-          {agent.activeLabel}
-        </div>
-      )}
-      {isDone && (
-        <div style={{ fontSize: 10, color: "var(--sub)", fontFamily: "var(--font-mono)" }}>
-          ✓ {agent.result}
-        </div>
-      )}
-    </div>
-  );
+const WORKSPACE_TABS: { id: WorkspaceTab; label: string }[] = [
+  { id: "network", label: "Network" },
+  { id: "research", label: "Research" },
+  { id: "pricing", label: "Pricing" },
+  { id: "listings", label: "Listings" },
+  { id: "marketing", label: "Marketing" },
+];
+
+const DEFAULT_PLATFORMS: Platform[] = ["amazon", "etsy", "ebay", "walmart"];
+const DEFAULT_PRODUCT: ProductInput = {
+  name: "My Product",
+  category: "General",
+  images: [],
+};
+
+function readStoredProduct(): { product: ProductInput; platforms: Platform[] } {
+  try {
+    const raw = JSON.parse(localStorage.getItem("swarmsell-product") ?? "{}") as Record<string, unknown>;
+    const platforms: Platform[] = (
+      Array.isArray(raw.platforms) && raw.platforms.length > 0
+        ? (raw.platforms as string[])
+        : DEFAULT_PLATFORMS
+    ).filter((p): p is Platform => DEFAULT_PLATFORMS.includes(p as Platform));
+
+    return {
+      product: {
+        name: (raw.name as string) || DEFAULT_PRODUCT.name,
+        category: (raw.category as string) || DEFAULT_PRODUCT.category,
+        description: raw.description as string | undefined,
+        cost: raw.cost != null && raw.cost !== "" ? Number(raw.cost) : undefined,
+        targetMargin: raw.margin != null && raw.margin !== "" ? Number(raw.margin) : undefined,
+        images: (raw.images as string[]) ?? [],
+      },
+      platforms,
+    };
+  } catch {
+    return { product: DEFAULT_PRODUCT, platforms: DEFAULT_PLATFORMS };
+  }
 }
 
-function PhaseLabel({ children }: { children: React.ReactNode }) {
+function ProductSummary({
+  product,
+  platforms,
+}: {
+  product: ProductInput;
+  platforms: Platform[];
+}) {
+  const thumb = product.images[0];
+  const meta = [
+    product.category,
+    product.cost != null ? `cost $${product.cost.toFixed(2)}` : null,
+    product.targetMargin != null ? `${product.targetMargin}% margin` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   return (
-    <div className="flex items-center gap-3" style={{ marginBottom: 12 }}>
-      <span style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--sub)", letterSpacing: "0.14em", whiteSpace: "nowrap" }}>
-        {children}
-      </span>
-      <div style={{ flex: 1, height: 1, background: "var(--edge)" }} />
+    <div className="product-strip">
+      {thumb ? (
+        <img src={`data:image/jpeg;base64,${thumb}`} alt="" className="product-strip__thumb" />
+      ) : (
+        <div className="product-strip__placeholder">◆</div>
+      )}
+      <div className="product-strip__meta">
+        <div className="product-strip__kicker">LAUNCH KIT</div>
+        <h1 className="product-strip__title">{product.name}</h1>
+        {meta ? (
+          <p style={{ fontSize: 11, color: "var(--sub)", fontFamily: "var(--font-mono)", marginBottom: 8 }}>{meta}</p>
+        ) : null}
+        <div className="product-strip__tags">
+          {platforms.map((id) => {
+            const pl = PLATFORMS.find((x) => x.id === id);
+            if (!pl) return null;
+            return (
+              <span
+                key={id}
+                style={{
+                  fontSize: 9,
+                  fontFamily: "var(--font-mono)",
+                  letterSpacing: "0.08em",
+                  color: pl.color,
+                  border: `1px solid ${pl.color}50`,
+                  background: `${pl.color}12`,
+                  borderRadius: 4,
+                  padding: "2px 8px",
+                }}
+              >
+                {pl.label.toUpperCase()}
+              </span>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
@@ -171,8 +193,16 @@ export default function DashboardPage() {
   const [totalTime, setTotalTime]     = useState(0);
   const [pausedAt, setPausedAt]       = useState<PausedStage | null>(null);
   const [liveBrowsers, setLiveBrowsers] = useState<Partial<Record<Platform, LiveBrowserSession>>>({});
-  const [researchPlatforms, setResearchPlatforms] = useState<Platform[]>([]);
+  const [product, setProduct] = useState<ProductInput>(DEFAULT_PRODUCT);
+  const [researchPlatforms, setResearchPlatforms] = useState<Platform[]>(DEFAULT_PLATFORMS);
+  const [hydrated, setHydrated] = useState(false);
+  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>("network");
   const continueRef                   = useRef<(() => void) | null>(null);
+  const swarmRunIdRef                 = useRef(0);
+
+  useEffect(() => {
+    if (pausedAt) setWorkspaceTab(pausedAt);
+  }, [pausedAt]);
 
   const handleContinue = useCallback(() => {
     setPausedAt(null);
@@ -190,6 +220,8 @@ export default function DashboardPage() {
   );
 
   useEffect(() => {
+    const runId = ++swarmRunIdRef.current;
+    const abort = new AbortController();
     const t0 = Date.now();
     let cancelled = false;
 
@@ -219,23 +251,10 @@ export default function DashboardPage() {
       );
     };
 
-    let raw: Record<string, unknown> = {};
-    try { raw = JSON.parse(localStorage.getItem("swarmsell-product") ?? "{}"); } catch { /* ignore */ }
-
-    const product: ProductInput = {
-      name:         (raw.name as string)     || "My Product",
-      category:     (raw.category as string) || "General",
-      description:  raw.description as string | undefined,
-      cost:         raw.cost ? Number(raw.cost) : undefined,
-      targetMargin: raw.margin ? Number(raw.margin) : undefined,
-      images:       (raw.images as string[]) ?? [],
-    };
-    const platforms: Platform[] =
-      Array.isArray(raw.platforms) && raw.platforms.length > 0
-        ? (raw.platforms as Platform[])
-        : ["amazon", "etsy", "ebay", "walmart", "facebook"];
-
+    const { product: storedProduct, platforms } = readStoredProduct();
+    setProduct(storedProduct);
     setResearchPlatforms(platforms);
+    setHydrated(true);
 
     const bbIds = platforms.map((p) => `bb-${p}`);
     const listingIds = platforms.map((p) => `lst-${p}`);
@@ -244,7 +263,8 @@ export default function DashboardPage() {
       activate(bbIds);
 
       try {
-        const completedKit = await runSwarm(product, platforms, async (event) => {
+        const completedKit = await runSwarm(storedProduct, platforms, async (event) => {
+          if (runId !== swarmRunIdRef.current || abort.signal.aborted) return;
           if (event.browserSession) {
             const { platform, debugUrl, sessionUrl } = event.browserSession;
             setLiveBrowsers((prev) => ({
@@ -286,9 +306,9 @@ export default function DashboardPage() {
             if (firstListing) setPlatformTab(firstListing);
             await waitForContinue("listings");
           }
-        });
+        }, { signal: abort.signal });
 
-        if (cancelled) return;
+        if (cancelled || runId !== swarmRunIdRef.current || abort.signal.aborted) return;
 
         activate(["meta-ads", "tiktok", "email", "social"]);
         const { outputs } = await runMarketingAgents(completedKit);
@@ -306,6 +326,14 @@ export default function DashboardPage() {
         if (cancelled) return;
         setAllComplete(true);
       } catch (err: unknown) {
+        if (cancelled || runId !== swarmRunIdRef.current) return;
+        const isAbort =
+          (err instanceof DOMException && err.name === "AbortError") ||
+          (err instanceof Error && err.name === "AbortError") ||
+          (err instanceof TypeError &&
+            /network error|failed to fetch/i.test(err.message) &&
+            abort.signal.aborted);
+        if (isAbort) return;
         console.error("[dashboard] swarm failed:", err);
         setSwarmError(err instanceof Error ? err.message : String(err));
         setAllComplete(true);
@@ -313,10 +341,12 @@ export default function DashboardPage() {
     }
 
     runWorkflow();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      abort.abort();
+    };
   }, [waitForContinue]);
 
-  const byPhase      = (ph: number) => agents.filter((a) => a.phase === ph);
   const pricingEntry = kit?.pricing?.[platformTab as Platform];
   const hasListings  =
     kit != null && PLATFORMS.some((pl) => kit.listings[pl.id as Platform] != null);
@@ -357,38 +387,10 @@ export default function DashboardPage() {
         </div>
       </header>
 
-      <div style={{ maxWidth: 1200, margin: "0 auto", padding: "32px 32px 80px" }}>
-        {/* ─── AGENT PIPELINE ──────────────────────────────────────────────── */}
-        <div style={{ marginBottom: 48 }}>
-          <div style={{ marginBottom: 12 }}>
-            <PhaseLabel>PHASE 1 · BROWSERBASE MARKET RESEARCH</PhaseLabel>
-            <div className="grid grid-cols-5 gap-3">
-              {byPhase(1).map((a) => <AgentCard key={a.id} agent={a} />)}
-            </div>
-            <BrowserLiveGrid sessions={liveBrowsers} platformOrder={researchPlatforms} />
-          </div>
-          <div style={{ textAlign: "center", color: "var(--dim)", fontSize: 18, margin: "6px 0" }}>↓</div>
-          <div style={{ marginBottom: 12 }}>
-            <PhaseLabel>PHASE 2 · PRICING INTELLIGENCE</PhaseLabel>
-            <div style={{ maxWidth: 360 }}>
-              {byPhase(2).map((a) => <AgentCard key={a.id} agent={a} />)}
-            </div>
-          </div>
-          <div style={{ textAlign: "center", color: "var(--dim)", fontSize: 18, margin: "6px 0" }}>↓</div>
-          <div>
-            <PhaseLabel>PHASE 3 · CONTENT GENERATION (PARALLEL)</PhaseLabel>
-            <div className="grid grid-cols-2 gap-6">
-              <div>
-                <div style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--dim)", letterSpacing: "0.1em", marginBottom: 10 }}>MARKETPLACE LISTINGS</div>
-                <div className="flex flex-col gap-3">{byPhase(3).map((a) => <AgentCard key={a.id} agent={a} />)}</div>
-              </div>
-              <div>
-                <div style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--dim)", letterSpacing: "0.1em", marginBottom: 10 }}>MARKETING AGENTS</div>
-                <div className="flex flex-col gap-3">{byPhase(4).map((a) => <AgentCard key={a.id} agent={a} />)}</div>
-              </div>
-            </div>
-          </div>
-        </div>
+      <div className="dashboard-shell">
+        {hydrated && (
+          <ProductSummary product={kit?.product ?? product} platforms={researchPlatforms} />
+        )}
 
         {/* ─── ERROR BANNER ────────────────────────────────────────────────── */}
         {swarmError && (
@@ -412,7 +414,7 @@ export default function DashboardPage() {
               <div>
                 <div style={{ fontSize: 16, fontWeight: 700, color: "var(--signal)", marginBottom: 3 }}>SwarmSell Complete</div>
                 <div style={{ fontSize: 13, color: "var(--sub)" }}>
-                  15 agents · live Browserbase data from 5 platforms · all listings & marketing ready
+                  13 agents · 4 platforms · all listings & marketing ready
                 </div>
               </div>
             </div>
@@ -426,25 +428,105 @@ export default function DashboardPage() {
         )}
 
         {pausedAt && (
-          <ContinueBanner stage={pausedAt} onContinue={handleContinue} />
+          <div style={{ marginBottom: 16 }}>
+            <ContinueBanner stage={pausedAt} onContinue={handleContinue} />
+          </div>
         )}
 
-        {showMarket && kit && (
-          <SectionShell title="PHASE 1 · LIVE MARKET RESEARCH">
-            <MarketDataResults marketData={kit.marketData} />
-          </SectionShell>
-        )}
+        <div className="dashboard-grid">
+          <section className="dashboard-network">
+            <OrchestratorHub
+              agents={agents}
+              productName={kit?.product?.name ?? product.name}
+              pausedAt={pausedAt}
+              allComplete={allComplete}
+              totalTime={totalTime}
+              liveBrowsers={liveBrowsers}
+            />
+          </section>
 
-        {hasPricing && kit && (
-          <SectionShell title="PHASE 2 · PRICING INTELLIGENCE">
-            <PricingResults pricing={kit.pricing} />
-          </SectionShell>
-        )}
+          <section className="dashboard-workspace">
+            <div className="workspace-tabs">
+              {WORKSPACE_TABS.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  className={`workspace-tab${workspaceTab === tab.id ? " workspace-tab--active" : ""}`}
+                  onClick={() => setWorkspaceTab(tab.id)}
+                >
+                  {tab.label.toUpperCase()}
+                </button>
+              ))}
+            </div>
+            <div className="workspace-body">
+              {workspaceTab === "network" && (
+                <div className="flex flex-col gap-3">
+                  {agents.map((a) => (
+                    <div
+                      key={a.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        padding: "10px 12px",
+                        borderRadius: 8,
+                        border: "1px solid var(--edge)",
+                        background: "var(--surface)",
+                        opacity: a.status === "queued" ? 0.6 : 1,
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: "50%",
+                          flexShrink: 0,
+                          background:
+                            a.status === "active"
+                              ? "var(--amber)"
+                              : a.status === "complete"
+                                ? "var(--signal)"
+                                : "var(--dim)",
+                        }}
+                      />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text)" }}>{a.name}</div>
+                        <div style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--sub)" }}>
+                          {a.status === "active"
+                            ? a.activeLabel
+                            : a.status === "complete"
+                              ? `✓ ${a.result}`
+                              : "Queued"}
+                        </div>
+                      </div>
+                      <span style={{ fontSize: 9, fontFamily: "var(--font-mono)", color: "var(--dim)" }}>
+                        {a.type}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
 
-        {/* ─── LISTINGS + MARKETING OUTPUT ─────────────────────────────────── */}
-        {kit && (hasListings || marketing) && (
-          <div style={{ animation: "fadeUp 0.6s ease both" }}>
-            {hasListings && (
+              {workspaceTab === "research" && showMarket && kit && (
+                <MarketDataResults marketData={kit.marketData} />
+              )}
+              {workspaceTab === "research" && !showMarket && (
+                <div style={{ textAlign: "center", padding: "40px 20px", color: "var(--sub)", fontSize: 13 }}>
+                  Research results appear after Phase 1 completes.
+                </div>
+              )}
+
+              {workspaceTab === "pricing" && hasPricing && kit && (
+                <PricingResults pricing={kit.pricing} />
+              )}
+              {workspaceTab === "pricing" && !hasPricing && (
+                <div style={{ textAlign: "center", padding: "40px 20px", color: "var(--sub)", fontSize: 13 }}>
+                  Pricing intelligence runs after market research.
+                </div>
+              )}
+
+              {workspaceTab === "listings" && kit && hasListings && (
+
             <div style={{ marginBottom: 32 }}>
               <div style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--sub)", letterSpacing: "0.14em", marginBottom: 12 }}>
                 MARKETPLACE LISTINGS
@@ -577,21 +659,18 @@ export default function DashboardPage() {
                       )}
                     </div>
                   )}
-                  {platformTab === "facebook" && kit.listings.facebook && (
-                    <div>
-                      <div style={{ fontSize: 10, color: "var(--sub)", fontFamily: "var(--font-mono)", letterSpacing: "0.1em", marginBottom: 8 }}>TITLE</div>
-                      <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text)", marginBottom: 20 }}>{kit.listings.facebook.title}</div>
-                      <div style={{ fontSize: 10, color: "var(--sub)", fontFamily: "var(--font-mono)", letterSpacing: "0.1em", marginBottom: 8 }}>DESCRIPTION</div>
-                      <div style={{ fontSize: 14, color: "var(--text)", lineHeight: 1.7, background: "var(--surface)", border: "1px solid var(--edge)", borderRadius: 6, padding: "14px 16px" }}>{kit.listings.facebook.description}</div>
-                    </div>
-                  )}
                 </div>
               </div>
             </div>
-            )}
+                          )}
 
-            {/* ── Marketing tabs ── */}
-            {marketing && (
+              {workspaceTab === "listings" && (!kit || !hasListings) && (
+                <div style={{ textAlign: "center", padding: "40px 20px", color: "var(--sub)", fontSize: 13 }}>
+                  Listings generate in Phase 3.
+                </div>
+              )}
+
+              {workspaceTab === "marketing" && marketing && (
               <div>
                 <div style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--sub)", letterSpacing: "0.14em", marginBottom: 12 }}>
                   MARKETING ASSETS
@@ -686,9 +765,16 @@ export default function DashboardPage() {
                   )}
                 </div>
               </div>
-            )}
-          </div>
-        )}
+              )}
+
+              {workspaceTab === "marketing" && !marketing && (
+                <div style={{ textAlign: "center", padding: "40px 20px", color: "var(--sub)", fontSize: 13 }}>
+                  Marketing assets generate in Phase 4.
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
 
         {/* ─── WAITING STATE ───────────────────────────────────────────────── */}
         {!kit && !pausedAt && !allComplete && !swarmError && (

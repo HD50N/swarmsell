@@ -2,20 +2,13 @@ import type {
   AmazonListing,
   EbayListing,
   EtsyListing,
-  FacebookListing,
   LaunchKit,
   MarketingOutputs,
   Platform,
   WalmartListing,
 } from "./types";
 
-const PLATFORM_ORDER: Platform[] = [
-  "amazon",
-  "etsy",
-  "ebay",
-  "walmart",
-  "facebook",
-];
+const PLATFORM_ORDER: Platform[] = ["amazon", "etsy", "ebay", "walmart"];
 
 export function buildKitMarkdown(
   kit: LaunchKit,
@@ -105,10 +98,6 @@ export function buildKitMarkdown(
         w("**Specs:**");
         for (const [k, v] of Object.entries(wm.specs)) w(`- ${k}: ${v}`);
       }
-    } else if (platform === "facebook") {
-      const fb = l as FacebookListing;
-      w("");
-      w(fb.description);
     }
     w("");
   }

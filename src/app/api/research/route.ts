@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { createOpenAI } from "@ai-sdk/openai";
 import { AISdkClient, Stagehand } from "@browserbasehq/stagehand";
 import { z } from "zod";
-import type { Platform, MarketData, MarketDataPlatform } from "@/lib/swarm/types";
+import { ALL_PLATFORMS, type Platform, type MarketData, type MarketDataPlatform } from "@/lib/swarm/types";
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
 
@@ -20,21 +20,66 @@ function createOpenAiLlmClient(): AISdkClient {
   return new AISdkClient({ model: provider.chat(modelId) });
 }
 
+/** Public Etsy market pages avoid the sign-in wall on /search. */
+function etsyMarketSlug(query: string): string {
+  const slug = query
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_|_$/g, "");
+  return slug || "handmade";
+}
+
 const SEARCH_URLS: Record<Platform, (q: string) => string> = {
-  amazon:   (q) => `https://www.amazon.com/s?k=${encodeURIComponent(q)}`,
-  etsy:     (q) => `https://www.etsy.com/search?q=${encodeURIComponent(q)}`,
-  ebay:     (q) => `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(q)}&LH_Sold=1&LH_Complete=1`,
-  walmart:  (q) => `https://www.walmart.com/search?q=${encodeURIComponent(q)}`,
-  facebook: (q) => `https://www.facebook.com/marketplace/search/?query=${encodeURIComponent(q)}`,
+  amazon: (q) => `https://www.amazon.com/s?k=${encodeURIComponent(q)}`,
+  // Market browse pages are guest-accessible (search often redirects to sign-in).
+  etsy: (q) => `https://www.etsy.com/market/${etsyMarketSlug(q)}`,
+  // Active Buy It Now listings — sold/completed filters often require sign-in.
+  ebay: (q) =>
+    `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(q)}&LH_BIN=1&_sop=15&rt=nc&_ipg=60`,
+  walmart: (q) => `https://www.walmart.com/search?q=${encodeURIComponent(q)}`,
 };
 
 const INSTRUCTIONS: Record<Platform, string> = {
-  amazon:   "List the prices of the top products in the search results. Also list the most common keywords from their titles. Exclude sponsored listings if identifiable.",
-  etsy:     "List the prices from the top listings. Also list common tags or style keywords across those listings.",
-  ebay:     "List the actual sold prices from the completed/sold listings shown. These are real transaction prices.",
-  walmart:  "List the shelf prices of the top products in the search results. If blocked or empty, return prices: [] and keywords: [].",
-  facebook: "List the asking prices from the top marketplace listings shown.",
+  amazon:
+    "List the prices of the top products in the search results. Also list the most common keywords from their titles. Exclude sponsored listings if identifiable.",
+  etsy:
+    "On this Etsy market page, list USD prices from visible product listings. Also list common tags or style keywords from titles. If you see a sign-in page instead of listings, return prices: [] and keywords: [].",
+  ebay:
+    "List the Buy It Now prices from the search results (ignore auction-only listings). Also list common keywords from titles. If blocked or empty, return prices: [] and keywords: [].",
+  walmart:
+    "List shelf prices from product search results. If you see a robot check, captcha, or block page, return prices: [] and keywords: [].",
 };
+
+const PAGE_WAIT_MS: Record<Platform, number> = {
+  amazon: 2500,
+  etsy: 3500,
+  ebay: 3000,
+  walmart: 4500,
+};
+
+async function dismissCommonOverlays(
+  page: { evaluate: (fn: () => void) => Promise<unknown> } | null | undefined
+) {
+  if (!page) return;
+  try {
+    await page.evaluate(() => {
+      const labels = ["accept all", "accept", "agree", "i agree", "got it", "allow all", "continue"];
+      const nodes = Array.from(document.querySelectorAll("button, a, [role='button']"));
+      for (const label of labels) {
+        const hit = nodes.find((el) =>
+          el.textContent?.trim().toLowerCase().includes(label)
+        );
+        if (hit instanceof HTMLElement) {
+          hit.click();
+          break;
+        }
+      }
+    });
+  } catch {
+    /* optional */
+  }
+}
 
 const coerceArray = <T>(inner: z.ZodType<T>) =>
   z.preprocess((val) => (val == null ? [] : val), inner);
@@ -77,6 +122,7 @@ async function scrapePlatform(
     verbose: 0,
     disableAPI: true,
     llmClient: createOpenAiLlmClient(),
+    // Default Browserbase session — advancedStealth requires Enterprise (403 otherwise).
   });
 
   try {
@@ -92,11 +138,13 @@ async function scrapePlatform(
 
     const page = stagehand.context.activePage();
     await page?.goto(SEARCH_URLS[platform](query), {
-      waitUntil: "load",
-      timeoutMs: 20_000,
+      waitUntil: "domcontentloaded",
+      timeoutMs: 25_000,
     });
-    await page?.waitForTimeout(2500);
-    await page?.evaluate(() => window.scrollTo(0, Math.min(800, document.body.scrollHeight)));
+    await page?.waitForTimeout(PAGE_WAIT_MS[platform]);
+    await dismissCommonOverlays(page);
+    await page?.waitForTimeout(800);
+    await page?.evaluate(() => window.scrollTo(0, Math.min(900, document.body.scrollHeight)));
 
     const result = await safeExtract(stagehand, INSTRUCTIONS[platform]);
 
@@ -109,10 +157,12 @@ async function scrapePlatform(
       prices.length >= 2 ? [Math.min(...prices), Math.max(...prices)] : undefined;
     const keywords = (result.keywords ?? []).slice(0, 8);
 
-    if (platform === "ebay") {
-      return { soldPriceRange: range, avgSoldPrice: avg, topKeywords: keywords };
-    }
-    return { priceRange: range, avgPrice: avg, topKeywords: keywords, topTags: keywords };
+    return {
+      priceRange: range,
+      avgPrice: avg,
+      topKeywords: keywords,
+      topTags: keywords,
+    };
   } finally {
     onBrowserClosed?.();
     await stagehand.close();
@@ -160,6 +210,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "query and platforms[] required" }, { status: 400 });
   }
 
+  const activePlatforms = platforms.filter((p): p is Platform =>
+    (ALL_PLATFORMS as readonly string[]).includes(p)
+  );
+  if (activePlatforms.length === 0) {
+    return NextResponse.json({ error: "No supported platforms" }, { status: 400 });
+  }
+
   if (!process.env.BROWSERBASE_API_KEY || !process.env.BROWSERBASE_PROJECT_ID) {
     return NextResponse.json({ marketData: {}, errors: { _: "Browserbase not configured" } });
   }
@@ -177,12 +234,21 @@ export async function POST(req: NextRequest) {
         const send = (event: string, data: unknown) =>
           controller.enqueue(encoder.encode(sse(event, data)));
 
+        const heartbeat = setInterval(() => {
+          try {
+            controller.enqueue(encoder.encode(": ping\n\n"));
+          } catch {
+            /* stream closed */
+          }
+        }, 10_000);
+
         try {
-          const result = await runResearch(query, platforms, send);
+          const result = await runResearch(query, activePlatforms, send);
           send("done", result);
         } catch (err) {
           send("error", { message: err instanceof Error ? err.message : String(err) });
         } finally {
+          clearInterval(heartbeat);
           controller.close();
         }
       },
@@ -193,10 +259,11 @@ export async function POST(req: NextRequest) {
         "Content-Type": "text/event-stream; charset=utf-8",
         "Cache-Control": "no-cache, no-transform",
         Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
       },
     });
   }
 
-  const { marketData, errors } = await runResearch(query, platforms);
+  const { marketData, errors } = await runResearch(query, activePlatforms);
   return NextResponse.json({ marketData, errors });
 }

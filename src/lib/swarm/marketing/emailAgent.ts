@@ -6,7 +6,7 @@ export async function emailAgent(kit: LaunchKit): Promise<EmailSequenceOutput> {
 
   const storyHint = listings.etsy?.description ?? product.description ?? "";
   const launchPrice =
-    pricing.etsy?.price ?? pricing.amazon?.price ?? pricing.facebook?.price;
+    pricing.etsy?.price ?? pricing.amazon?.price ?? pricing.walmart?.price;
 
   const prompt = `
 You are an email marketing copywriter for SMB e-commerce brands.
