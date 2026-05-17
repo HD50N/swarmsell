@@ -1,9 +1,4 @@
-// Integration contract between Person 1 (input/research/pricing/listings) and
-// Person 2 (marketing/dashboard/export). Person 1's pipeline must produce a
-// LaunchKit; Person 2's marketing agents and Dashboard consume it.
-//
-// If Person 1 changes the schema, update this file and we'll catch mismatches
-// at compile time.
+// Shared types for the swarm pipeline: research → pricing → listings → marketing.
 
 export type Platform = "amazon" | "etsy" | "ebay" | "walmart" | "facebook";
 
@@ -21,7 +16,6 @@ export type ProductInput = {
   description?: string;
   cost?: number;
   targetMargin?: number;
-  // base64-encoded JPEGs; passed to Claude as image content blocks.
   images: string[];
 };
 
@@ -90,8 +84,6 @@ export type LaunchKit = {
   listings: Listings;
 };
 
-// ─── Person 2 marketing-agent output shapes ──────────────────────────────────
-
 export type MetaAdVariantType = "awareness" | "consideration" | "conversion";
 
 export type MetaAdVariant = {
@@ -138,7 +130,7 @@ export type SocialPost = {
 };
 
 export type SocialDay = {
-  day: number; // 1-7
+  day: number;
   posts: SocialPost[];
 };
 

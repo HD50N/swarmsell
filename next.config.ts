@@ -1,7 +1,13 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // Stagehand + Playwright are Node-only — don't bundle them through Webpack
+  serverExternalPackages: [
+    "@browserbasehq/stagehand",
+    "@browserbasehq/sdk",
+    "playwright",
+    "playwright-core",
+  ],
 };
 
 export default nextConfig;

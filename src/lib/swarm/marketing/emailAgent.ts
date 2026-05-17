@@ -29,7 +29,7 @@ Per email:
 
 Sound like a real person who makes this product, not a brand bot.
 Do not invent specific customer names or fake reviews.
-Keep each body under ~700 characters — the API route caps output tokens.
+Keep each body under ~700 characters.
 
 Return ONLY this JSON, no prose, no code fences:
 {

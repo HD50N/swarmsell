@@ -1,8 +1,3 @@
-// Serializes the full launch kit to a single markdown file the SMB owner can
-// open in any editor or paste into a doc. Two entry points:
-//   buildKitMarkdown(kit, marketing) → string  (server-safe, no DOM)
-//   downloadKitMarkdown(kit, marketing)        (client only, uses Blob/anchor)
-
 import type {
   AmazonListing,
   EbayListing,

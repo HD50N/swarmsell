@@ -4,7 +4,7 @@ const WAFER_BASE = "https://pass.wafer.ai/v1";
 const DEFAULT_MODEL = "Qwen3.5-397B-A17B";
 
 export async function POST(req: NextRequest) {
-  const { prompt, images = [], model = DEFAULT_MODEL } = await req.json();
+  const { prompt, images = [], model = DEFAULT_MODEL, max_tokens = 8000 } = await req.json();
 
   const apiKey = process.env.WAFER_API_KEY;
   if (!apiKey) {
@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
     body: JSON.stringify({
       model,
       messages: [{ role: "user", content }],
-      max_tokens: 2000,
+      max_tokens,
     }),
   });
 

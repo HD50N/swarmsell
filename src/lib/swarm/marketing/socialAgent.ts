@@ -26,7 +26,7 @@ Per post:
     - pinterest: descriptive, search-driven, includes the product type
 - hashtags: 3-6 hashtags as strings starting with "#", relevant to that channel
 
-Keep captions tight — total output must fit in ~2000 tokens. Suggested theme rotation:
+Keep captions tight. Suggested theme rotation:
 Day 1: origin / why-it-exists
 Day 2: behind-the-scenes / process
 Day 3: product detail / what makes it different

@@ -9,6 +9,9 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@ai-sdk/openai": "^2.0.53",
+    "@browserbasehq/sdk": "^2.11.0",
+    "@browserbasehq/stagehand": "^3.4.0",
     "next": "16.2.6",
     "react": "19.2.4",
     "react-dom": "19.2.4"

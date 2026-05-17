@@ -9,9 +9,6 @@ export type MarketingRunResult = {
   errors: Partial<Record<keyof MarketingOutputs, string>>;
 };
 
-// Fire all four marketing agents in parallel. A single failure does NOT bring
-// down the rest — we collect errors and surface them so the dashboard can show
-// a partial kit instead of nothing.
 export async function runMarketingAgents(kit: LaunchKit): Promise<MarketingRunResult> {
   const [meta, tiktok, email, social] = await Promise.allSettled([
     metaAdAgent(kit),
